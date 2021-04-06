@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=Monospace font config
+Comment=Tool for detecting and setting monospace font
+Icon=user 
+Exec=/usr/local/bin/font-monospace-config
+Terminal=true
+Type=Application
+AutostartCondition=unless-exists font-monospace-config/setup-done
+X-KDE-autostart-condition=font-monospace-config/setup-done::autostart:true

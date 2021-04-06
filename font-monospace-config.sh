@@ -1,0 +1,270 @@
+#!/bin/bash
+
+set -e
+
+TARGET='font-monospace-config'
+
+#### Functions =================================================================
+
+showmessage()
+{
+    local message="$1"
+
+    if tty -s
+    then
+        echo "${message}"
+        read -p "Press [Enter] to continue"
+    else
+        zenity --info --width 400 --text="${message}"
+    fi
+}
+
+showquestion()
+{
+    local message="$1"
+
+    if tty -s
+    then
+        while true
+        do
+            read -p "${message} [Y/n] " RESULT
+
+            if [[ -z "${RESULT}" || "${RESULT,,}" == 'y' ]]
+            then
+                return 0
+            fi
+
+            if [[ "${RESULT,,}" == 'n' ]]
+            then
+                return 1
+            fi
+        done
+    else
+        if zenity --question --width 400 --text="${message}"
+        then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+selectvalue()
+{
+    local title="$1"
+    local prompt="$2"
+    
+    shift
+    shift
+
+    local result=''
+
+    if tty -s
+    then
+        result=''
+        
+        echo "${prompt}" >&2
+        select result in "$@"
+        do
+            if [[ -z "${REPLY}" ]] || [[ ${REPLY} -gt 0 && ${REPLY} -le $# ]]
+            then
+                break
+            else
+                
+                continue
+            fi
+        done
+    else
+        while true
+        do
+            result=$(zenity --title="$title" --text="$prompt" --list --column="Options" "$@") || break
+            if [[ -n "$result" ]]
+            then
+                break
+            fi
+        done
+    fi
+    
+    echo "$result"
+}
+
+disableautostart()
+{
+    showmessage "Configuration completed. You can re-configure text scaling factor by running '${TARGET}' command"
+
+    mkdir -p "${HOME}/.config/${TARGET}"
+    echo "autostart=false" > "${HOME}/.config/${TARGET}/setup-done"
+}
+
+function ispkginstalled()
+{
+    app="$1"
+
+    if dpkg -s "${app}" >/dev/null 2>&1
+    then
+        return 0
+    else
+        return 1
+    fi
+}
+
+#### Globals ===================================================================
+
+unset options
+declare -a options
+
+options=('Ubuntu Mono' 'Fira Code' 'JetBrains Mono' 'Noto Sans Mono' 'Hack')
+
+#### Get system monospace fonts ================================================
+
+# TODO
+
+#### Sort and remove duplicates from fonts list ===============================
+
+readarray -t fonts < <(for a in "${options[@]}"; do echo "$a"; done | uniq)
+
+#### Select and apply scale ====================================================
+
+# System (Gnome, Cinnamon, KDE)
+# Gnome Builder
+# Qt Creator
+# Konsole
+# Ghostwriter
+# SQLite Browser
+# Kate
+
+readonly schemagnome=       "gsettings set org.gnome.desktop.interface monospace-font-name"
+readonly schemacinnamon=    "gsettings set org.gnome.desktop.interface monospace-font-name"
+readonly schemadashpanel=   "org.gnome.shell.extensions.dash-to-dock dash-max-icon-size"
+readonly schemaepiphany=    "/org/gnome/epiphany/web/default-zoom-level"
+readonly schemalibreoffice= "/oor:items/item[@oor:path='/org.openoffice.Office.Common/Misc']/prop[@oor:name='SymbolStyle']/value"
+readonly filelibreoffice=   "${HOME}/.config/libreoffice/4/user/registrymodifications.xcu"
+readonly schemamarker=      "com.github.fabiocolacio.marker.preferences.preview preview-zoom-level"
+
+while true
+do
+    newscale="$(selectvalue 'Monospace font' 'Please select font:' "${scales[@]}")"
+    
+    if [[ -n "${newscale}" ]]
+    then
+        
+        if gsettings writable $schemagnome 1>/dev/null 2>/dev/null
+        then
+            oldscalegnome="$(gsettings get $schemagnome)"
+            gsettings set $schemagnome ${newscale}
+        fi
+        
+        if gsettings writable $schemacinnamon 1>/dev/null 2>/dev/null
+        then
+            oldscalecinnamon="$(gsettings get $schemacinnamon)"
+            gsettings set $schemacinnamon ${newscale}
+        fi
+        
+        if gsettings writable $schemadashpanel 1>/dev/null 2>/dev/null
+        then
+            iconsize="$(roundfloat "$(echo "48 * ${newscale}" | bc -l)")"
+            oldsizedashpanel="$(gsettings get $schemadashpanel)"
+            gsettings set $schemadashpanel ${iconsize}
+        fi
+        
+        if ispkginstalled epiphany-browser && ispkginstalled dconf-cli
+        then
+            oldscaleepiphany="$(dconf read $schemaepiphany)"
+            dconf write $schemaepiphany ${newscale}
+        fi
+        
+        if [[ -f "$filelibreoffice" ]]
+        then
+            if [[ $(echo "$newscale > 1.26" | bc -l) -eq 0 ]]
+            then
+                loicontheme=breeze
+            else
+                loicontheme=breeze_svg
+            fi
+        
+            oldiconlibreoffice="$(xmlstarlet select -t -v "$schemalibreoffice" "$filelibreoffice" | head -n1)"
+            xmlstarlet edit --inplace --update "$schemalibreoffice" --value "$loicontheme" "$filelibreoffice"
+        fi
+        
+        if ispkginstalled marker
+        then
+            oldscalemarker="$(gsettings get $schemamarker)"
+            gsettings set $schemamarker ${newscale}
+        fi
+        
+        if showquestion "Save these settings?" "save" "try another"
+        then
+            break
+        else
+            
+            if gsettings writable $schemagnome 1>/dev/null 2>/dev/null
+            then
+                if [[ -n "${oldscalegnome}" ]]
+                then
+                    gsettings set $schemagnome ${oldscalegnome}
+                else
+                    gsettings reset $schemagnome
+                fi
+            fi
+            
+            if gsettings writable $schemacinnamon 1>/dev/null 2>/dev/null
+            then
+                if [[ -n "${oldscalecinnamon}" ]]
+                then
+                    gsettings set $schemacinnamon ${oldscalecinnamon}
+                else
+                    gsettings reset $schemacinnamon
+                fi
+            fi
+            
+            if gsettings writable $schemadashpanel 1>/dev/null 2>/dev/null
+            then
+                if [[ -n "${oldsizedashpanel}" ]]
+                then
+                    gsettings set $schemadashpanel ${oldsizedashpanel}
+                else
+                    gsettings reset $schemadashpanel
+                fi
+            fi
+            
+            if ispkginstalled epiphany-browser && ispkginstalled dconf-cli
+            then
+                if [[ -n "${oldscaleepiphany}" ]]
+                then
+                    dconf write $schemaepiphany ${oldscaleepiphany}
+                else
+                    dconf reset $schemaepiphany
+                fi
+            fi
+            
+            if [[ -f "$filelibreoffice" ]]
+            then
+                if [[ -n "${oldiconlibreoffice}" ]]
+                then
+                    xmlstarlet edit --inplace --update "$schemalibreoffice" --value "$oldiconlibreoffice" "$filelibreoffice"
+                else
+                    xmlstarlet edit --inplace --delete "$schemalibreoffice" "$filelibreoffice"
+                fi
+            fi
+            
+            if gsettings writable $schemamarker 1>/dev/null 2>/dev/null
+            then
+                if [[ -n "${oldscalemarker}" ]]
+                then
+                    gsettings set $schemamarker ${oldscalemarker}
+                else
+                    gsettings reset $schemamarker
+                fi
+            fi
+            
+            continue
+        fi
+    fi
+    
+    break
+
+done
+
+#### Disable autostart =========================================================
+
+disableautostart
