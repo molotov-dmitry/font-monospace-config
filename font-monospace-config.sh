@@ -90,7 +90,7 @@ selectvalue()
 
 disableautostart()
 {
-    showmessage "Configuration completed. You can re-configure text scaling factor by running '${TARGET}' command"
+    showmessage "Configuration completed. You can re-configure monospace font by running '${TARGET}' command"
 
     mkdir -p "${HOME}/.config/${TARGET}"
     echo "autostart=false" > "${HOME}/.config/${TARGET}/setup-done"
@@ -108,12 +108,77 @@ function ispkginstalled()
     fi
 }
 
+safestring()
+{
+    local inputstr="$1"
+
+    echo "${inputstr}" | sed 's/\\/\\\\/g;s/\//\\\//g'
+}
+
+getconfigline()
+{
+    local key="$1"
+    local section="$2"
+    local file="$3"
+
+    if [[ -r "$file" ]]
+    then
+        sed -n "/^[ \t]*\[$(safestring "${section}")\]/,/\[/s/^[ \t]*$(safestring "${key}")[ \t]*=[ \t]*//p" "${file}"
+    fi
+}
+
+addconfigline()
+{
+    local key="$1"
+    local value="$2"
+    local section="$3"
+    local file="$4"
+
+    if ! grep -F "[${section}]" "$file" 1>/dev/null 2>/dev/null
+    then
+        mkdir -p "$(dirname "$file")"
+
+        echo >> "$file"
+
+        echo "[${section}]" >> "$file"
+    fi
+
+    sed -i "/^[[:space:]]*\[${section}\][[:space:]]*$/,/^[[:space:]]*\[.*/{/^[[:space:]]*$(safestring "${key}")[[:space:]]*=/d}" "$file"
+
+    sed -i "/\[${section}\]/a $(safestring "${key}=${value}")" "$file"
+
+    if [[ -n "$(tail -c1 "${file}")" ]]
+    then
+        echo >> "${file}"
+    fi
+}
+
+backup()
+{
+    local file="$1"
+    
+    [[ -f "${file}" ]] && cp -f "${file}" "${file}.old"
+}
+
+restore()
+{
+    local file="$1"
+
+    if [[ -f "${file}.old" ]]
+    then
+        mv "${file}.old" "${file}"
+    else
+        rm -f "${file}"
+    fi
+}
+
 #### Globals ===================================================================
 
 unset options
 declare -a options
 
 options=('Ubuntu Mono' 'Fira Code' 'JetBrains Mono' 'Noto Sans Mono' 'Hack')
+sizes=('10' '12' '14' '16' '18')
 
 #### Get system monospace fonts ================================================
 
@@ -123,139 +188,165 @@ options=('Ubuntu Mono' 'Fira Code' 'JetBrains Mono' 'Noto Sans Mono' 'Hack')
 
 readarray -t fonts < <(for a in "${options[@]}"; do echo "$a"; done | uniq)
 
-#### Select and apply scale ====================================================
+#### Select and apply font =====================================================
 
-# System (Gnome, Cinnamon, KDE)
-# Gnome Builder
-# Qt Creator
-# Konsole
-# Ghostwriter
-# SQLite Browser
-# Kate
+readonly schemagnome="org.gnome.desktop.interface monospace-font-name"
+readonly filekde="${HOME}/.config/kdeglobals"
+readonly schemabuilder="org.gnome.builder.editor font-name"
+readonly fileqtcreator="${HOME}/.config/QtProject/QtCreator.ini"
+readonly filekonsole="${HOME}/.local/share/konsole/UTF-8.profile"
+readonly filekate="${HOME}/.config/kateschemarc"
+readonly filesqlitebrowser="${HOME}/.config/sqlitebrowser/sqlitebrowser.conf"
+readonly fileghostwriter="${HOME}/.config/ghostwriter/ghostwriter.conf"
 
-readonly schemagnome=       "gsettings set org.gnome.desktop.interface monospace-font-name"
-readonly schemacinnamon=    "gsettings set org.gnome.desktop.interface monospace-font-name"
-readonly schemadashpanel=   "org.gnome.shell.extensions.dash-to-dock dash-max-icon-size"
-readonly schemaepiphany=    "/org/gnome/epiphany/web/default-zoom-level"
-readonly schemalibreoffice= "/oor:items/item[@oor:path='/org.openoffice.Office.Common/Misc']/prop[@oor:name='SymbolStyle']/value"
-readonly filelibreoffice=   "${HOME}/.config/libreoffice/4/user/registrymodifications.xcu"
-readonly schemamarker=      "com.github.fabiocolacio.marker.preferences.preview preview-zoom-level"
+### Apply settings =============================================================
 
 while true
 do
-    newscale="$(selectvalue 'Monospace font' 'Please select font:' "${scales[@]}")"
+    newfont="$(selectvalue 'Monospace font' 'Please select font:' "${fonts[@]}")"
     
-    if [[ -n "${newscale}" ]]
+    if [[ -n "$newfont" ]]
     then
+        newsize="$(selectvalue 'Font size' 'Please select size:' "${sizes[@]}")"
+    fi
+    
+    newoptionskde="-1,5,50,0,0,0,0,0"
+    newtypekde="Regular"
+    
+    if [[ -n "$newfont" && -n "$newsize" ]]
+    then
+    
+        ## Gnome/Cinnamon ------------------------------------------------------
         
         if gsettings writable $schemagnome 1>/dev/null 2>/dev/null
         then
-            oldscalegnome="$(gsettings get $schemagnome)"
-            gsettings set $schemagnome ${newscale}
+            oldfontgnome="$(gsettings get $schemagnome)"
+            gsettings set $schemagnome "${newfont} ${newsize}"
         fi
         
-        if gsettings writable $schemacinnamon 1>/dev/null 2>/dev/null
+        ## KDE -----------------------------------------------------------------
+        
+        if [[ -f "$filekde" ]]
         then
-            oldscalecinnamon="$(gsettings get $schemacinnamon)"
-            gsettings set $schemacinnamon ${newscale}
+            backup "$filekde"
+            
+            addconfigline 'fixed' "${newfont},${newsize},${newoptionskde},${newtypekde}" 'General' "$filekde"
         fi
         
-        if gsettings writable $schemadashpanel 1>/dev/null 2>/dev/null
+        ## Gnome Builder -------------------------------------------------------
+        
+        if gsettings writable $schemabuilder 1>/dev/null 2>/dev/null
         then
-            iconsize="$(roundfloat "$(echo "48 * ${newscale}" | bc -l)")"
-            oldsizedashpanel="$(gsettings get $schemadashpanel)"
-            gsettings set $schemadashpanel ${iconsize}
+            oldfontbuilder="$(gsettings get $schemabuilder)"
+            gsettings set $schemabuilder "${newfont} ${newsize}"
         fi
         
-        if ispkginstalled epiphany-browser && ispkginstalled dconf-cli
+        ## Qt Creator ----------------------------------------------------------
+        
+        if ispkginstalled qtcreator
         then
-            oldscaleepiphany="$(dconf read $schemaepiphany)"
-            dconf write $schemaepiphany ${newscale}
+            backup "$fileqtcreator"
+            
+            addconfigline 'FontFamily' "${newfont}" 'TextEditor' "$fileqtcreator"
+            addconfigline 'FontSize'   "${newsize}" 'TextEditor' "$fileqtcreator"
         fi
         
-        if [[ -f "$filelibreoffice" ]]
+        ## Konsole -------------------------------------------------------------
+        
+        if ispkginstalled konsole
         then
-            if [[ $(echo "$newscale > 1.26" | bc -l) -eq 0 ]]
-            then
-                loicontheme=breeze
-            else
-                loicontheme=breeze_svg
-            fi
-        
-            oldiconlibreoffice="$(xmlstarlet select -t -v "$schemalibreoffice" "$filelibreoffice" | head -n1)"
-            xmlstarlet edit --inplace --update "$schemalibreoffice" --value "$loicontheme" "$filelibreoffice"
+            backup "$filekonsole"
+            
+            addconfigline 'Font' "${newfont},${newsize},${newoptionskde},${newtypekde}" 'Appearance' "$filekonsole"
         fi
         
-        if ispkginstalled marker
+        ## Kate ----------------------------------------------------------------
+        
+        if ispkginstalled kate
         then
-            oldscalemarker="$(gsettings get $schemamarker)"
-            gsettings set $schemamarker ${newscale}
+            backup "$filekate"
+            
+            addconfigline 'Font' "${newfont},${newsize},${newoptionskde},${newtypekde}" 'Normal' "$filekate"
         fi
+        
+        ## SQLite Browser ------------------------------------------------------
+        
+        if ispkginstalled sqlitebrowser
+        then
+            backup "$filesqlitebrowser"
+            
+            addconfigline 'font'     "${newfont}" 'editor'      "$filesqlitebrowser"
+            addconfigline 'fontsize' "${newsize}" 'editor'      "$filesqlitebrowser"
+            addconfigline 'font'     "${newfont}" 'databrowser' "$filesqlitebrowser"
+        fi
+        
+        ## Ghostwriter ---------------------------------------------------------
+        
+        if ispkginstalled ghostwriter
+        then
+            backup "$fileghostwriter"
+            
+            addconfigline 'font' "${newfont},${newsize},${newoptionskde}" 'Style' "$fileghostwriter"
+        fi
+        
+        ## ---------------------------------------------------------------------
         
         if showquestion "Save these settings?" "save" "try another"
         then
             break
         else
+        
+            ### Reset settings =================================================
+            
+            ## Gnome/Cinnamon --------------------------------------------------
             
             if gsettings writable $schemagnome 1>/dev/null 2>/dev/null
             then
-                if [[ -n "${oldscalegnome}" ]]
+                if [[ -n "${oldfontgnome}" ]]
                 then
-                    gsettings set $schemagnome ${oldscalegnome}
+                    gsettings set $schemagnome "${oldfontgnome}"
                 else
                     gsettings reset $schemagnome
                 fi
             fi
             
-            if gsettings writable $schemacinnamon 1>/dev/null 2>/dev/null
+            ## KDE -------------------------------------------------------------
+            
+            restore "$filekde"
+            
+            ## Gnome Builder ---------------------------------------------------
+            
+            if gsettings writable $schemabuilder 1>/dev/null 2>/dev/null
             then
-                if [[ -n "${oldscalecinnamon}" ]]
+                if [[ -n "${oldfontbuilder}" ]]
                 then
-                    gsettings set $schemacinnamon ${oldscalecinnamon}
+                    gsettings set $schemabuilder "${oldfontbuilder}"
                 else
-                    gsettings reset $schemacinnamon
+                    gsettings reset $schemabuilder
                 fi
             fi
             
-            if gsettings writable $schemadashpanel 1>/dev/null 2>/dev/null
-            then
-                if [[ -n "${oldsizedashpanel}" ]]
-                then
-                    gsettings set $schemadashpanel ${oldsizedashpanel}
-                else
-                    gsettings reset $schemadashpanel
-                fi
-            fi
+            ## Qt Creator ------------------------------------------------------
             
-            if ispkginstalled epiphany-browser && ispkginstalled dconf-cli
-            then
-                if [[ -n "${oldscaleepiphany}" ]]
-                then
-                    dconf write $schemaepiphany ${oldscaleepiphany}
-                else
-                    dconf reset $schemaepiphany
-                fi
-            fi
+            restore "$fileqtcreator"
             
-            if [[ -f "$filelibreoffice" ]]
-            then
-                if [[ -n "${oldiconlibreoffice}" ]]
-                then
-                    xmlstarlet edit --inplace --update "$schemalibreoffice" --value "$oldiconlibreoffice" "$filelibreoffice"
-                else
-                    xmlstarlet edit --inplace --delete "$schemalibreoffice" "$filelibreoffice"
-                fi
-            fi
+            ## Konsole ---------------------------------------------------------
             
-            if gsettings writable $schemamarker 1>/dev/null 2>/dev/null
-            then
-                if [[ -n "${oldscalemarker}" ]]
-                then
-                    gsettings set $schemamarker ${oldscalemarker}
-                else
-                    gsettings reset $schemamarker
-                fi
-            fi
+            restore "$filekonsole"
+            
+            ## Kate ------------------------------------------------------------
+            
+            restore "$filekate"
+            
+            ## SQLite Browser --------------------------------------------------
+            
+            restore "$filesqlitebrowser"
+            
+            ## Ghostwriter -----------------------------------------------------
+            
+            restore "$fileghostwriter"
+            
+            ## -----------------------------------------------------------------
             
             continue
         fi
