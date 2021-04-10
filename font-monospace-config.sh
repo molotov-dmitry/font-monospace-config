@@ -177,7 +177,7 @@ restore()
 unset options
 declare -a options
 
-options=('Ubuntu Mono' 'Fira Code' 'JetBrains Mono' 'Noto Sans Mono' 'Hack')
+options=('Ubuntu Mono' 'Fira Code' 'JetBrains Mono' 'Noto Sans Mono' 'Hack' 'Consolas')
 sizes=('10' '12' '14' '16' '18')
 
 #### Get system monospace fonts ================================================
